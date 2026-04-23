@@ -1,12 +1,3 @@
-###py main_pipeline.py
-
-#1-6   事实查询类 – 针对明确存在的实体或关系的直接询问。
-#7-12  关系推理类 – 需要通过多跳关系或隐含路径推导才能得出的结论。
-#13-18 对比分析类 – 要求对两个或多个实体、流派、著作的特征、传承脉络进行异同比较。
-#19-24 归因溯源类 – 探究某种文化内涵或动作形式的来源、背景或创编动机。
-#25-30 综合应用类 – 需要结合多个实体及关系进行归纳、总结或列举。
-
-# 单元格 1：导入所有依赖和自定义模块
 import json
 import sys
 import re
@@ -19,7 +10,7 @@ sys.path.append(str(Path.cwd()))
 from config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
     ENTITY_LABELS, RELATION_TYPES, SIMILARITY_THRESHOLD,
-    OLLAMA_CHAT_MODEL, OLLAMA_BASE_URL
+    API_CHAT_MODEL, API_BASE_URL
 )
 from kg_client import Neo4jClient
 from utils import ollama_chat, ollama_embed, cosine_similarity, triple_to_text
@@ -35,9 +26,8 @@ from prompts import (
 
 print("所有模块导入成功。")
 
-# 单元格 2：定义步骤1 - 问题分解相关函数（从 step1 复制）
+# ---------- 步骤1：问题分解 ----------
 def decompose_question(question, max_depth=5, current_depth=0):
-    """递归分解问题，返回子问题节点列表（不包含根节点）"""
     if current_depth >= max_depth:
         return [{"sub_question": question, "state": "End", "depth": current_depth, "children": []}]
 
@@ -100,7 +90,6 @@ def decompose_question(question, max_depth=5, current_depth=0):
     return result_nodes
 
 def build_full_mind_map(original_question, max_depth=3):
-    """构建包含根节点的完整思维导图树，返回列表（只有一个根节点）"""
     root = {
         "sub_question": original_question,
         "state": "Continue",
@@ -119,7 +108,7 @@ def collect_leaf_questions(nodes):
             leafs.extend(collect_leaf_questions(node["children"]))
     return leafs
 
-# 单元格 3：定义步骤2 - 实体提取函数（从 step2 复制）
+# ---------- 步骤2：实体提取 ----------
 def extract_local_keys(question_list):
     prompt = fill_prompt(EXTRACT_LOCAL_PROMPT, mind_map=json.dumps(question_list, ensure_ascii=False))
     response = ollama_chat(prompt, temperature=0.1, format_json=False)
@@ -132,8 +121,8 @@ def extract_local_keys(question_list):
         return result
     except:
         return {"entities": []}
-    
-# 单元格 4：定义步骤3 - 本地检索函数（从 step3 复制）
+
+# ---------- 步骤3：本地检索 ----------
 MAX_HOPS = 2
 TOP_K_NODES = 100
 
@@ -191,7 +180,7 @@ def retrieve_local(entities, client):
     filtered = semantic_filter(list(all_candidate_triples), entities)
     return filtered
 
-# 单元格 5：定义步骤4 - 全局检索函数（从 step4 复制）
+# ---------- 步骤4：全局检索 ----------
 GLOBAL_TOP_K_NODES = 2
 
 def extract_global_subgraph(question_list):
@@ -248,15 +237,14 @@ def retrieve_global(leaf_questions, client):
         return []
     return match_global_subgraph(patterns, client)
 
-# 单元格 6：定义步骤5 - 推理与综合函数（修正版）
-def format_knowledge(triples, max_len=50):
+# ---------- 步骤5：推理与综合 ----------
+def format_knowledge(triples, max_len=None):
     lines = []
     for s, r, o in triples[:max_len]:
         lines.append(f"({s}, {r}, {o})")
     return "\n".join(lines)
 
 def ensure_str(ans):
-    """确保答案为字符串，若为列表则用逗号连接"""
     if ans is None:
         return ""
     if isinstance(ans, list):
@@ -264,7 +252,7 @@ def ensure_str(ans):
     return str(ans)
 
 def first_reasoning(question, knowledge_triples, verified_answers):
-    kg_text = format_knowledge(knowledge_triples)
+    kg_text = format_knowledge(knowledge_triples, max_len=None)
     verified_text = json.dumps(verified_answers, ensure_ascii=False, indent=2)
     prompt = fill_prompt(REASONING_PROMPT, question=question,
                          knowledge_triples=kg_text, verified_answers=verified_text)
@@ -285,7 +273,7 @@ def first_reasoning(question, knowledge_triples, verified_answers):
     return ensure_str(ans)
 
 def second_reasoning(question, knowledge_triples, verified_answers):
-    kg_text = format_knowledge(knowledge_triples)
+    kg_text = format_knowledge(knowledge_triples, max_len=None)
     verified_text = json.dumps(verified_answers, ensure_ascii=False, indent=2)
     prompt = fill_prompt(SECOND_REASONING_PROMPT, question=question,
                          knowledge_triples=kg_text, verified_answers=verified_text)
@@ -306,7 +294,7 @@ def second_reasoning(question, knowledge_triples, verified_answers):
     return ensure_str(ans)
 
 def rethink(question, knowledge_triples, verified_answers):
-    kg_text = format_knowledge(knowledge_triples)
+    kg_text = format_knowledge(knowledge_triples, max_len=None)
     verified_text = json.dumps(verified_answers, ensure_ascii=False, indent=2)
     prompt = fill_prompt(RETHINK_PROMPT, question=question,
                          knowledge_triples=kg_text, verified_answers=verified_text)
@@ -327,7 +315,7 @@ def rethink(question, knowledge_triples, verified_answers):
     return ensure_str(ans)
 
 def synthesize_final_answer(root_question, child_answers, knowledge_triples):
-    kg_text = format_knowledge(knowledge_triples)
+    kg_text = format_knowledge(knowledge_triples, max_len=None)
     answers_text = ""
     for q, ans in child_answers.items():
         answers_text += f"子问题：{q}\n答案：{ans}\n\n"
@@ -368,40 +356,39 @@ def synthesize_final_answer(root_question, child_answers, knowledge_triples):
     print("      [综合] LLM 响应已接收。")
     return response.strip()
 
-# 单元格 7：后序遍历函数
 def postorder_traverse(nodes):
     for node in nodes:
         if node.get("children"):
             yield from postorder_traverse(node["children"])
         yield node
 
-# 单元格 8：完整处理单个问题的函数
+# ---------- 单问题处理（新增返回 contexts） ----------
 def process_single_question(question, client):
     print(f"\n===== 处理问题：{question} =====\n")
-    
+
     # Step 1: 分解
     print("Step 1: 构建思维导图...")
     mind_map = build_full_mind_map(question, max_depth=3)
     leaf_questions = collect_leaf_questions(mind_map)
     print(f"  根问题：{mind_map[0]['sub_question']}")
     print(f"  叶子问题：{leaf_questions}")
-    
+
     # Step 2: 提取实体
     print("\nStep 2: 提取实体...")
     keys = extract_local_keys(leaf_questions)
     entities = keys.get("entities", [])
     print(f"  实体：{entities}")
-    
+
     # Step 3: 本地检索
     print("\nStep 3: 本地知识检索...")
     local_triples = retrieve_local(entities, client)
     print(f"  本地检索获得 {len(local_triples)} 条三元组")
-    
+
     # Step 4: 全局检索
     print("\nStep 4: 全局知识检索...")
     global_triples = retrieve_global(leaf_questions, client)
     print(f"  全局检索获得 {len(global_triples)} 条三元组")
-    
+
     # 合并知识池
     combined_set = set()
     for t in local_triples:
@@ -410,20 +397,23 @@ def process_single_question(question, client):
         combined_set.add(tuple(t) if isinstance(t, list) else t)
     knowledge_triples = [list(t) for t in combined_set]
     print(f"  合并后知识池共 {len(knowledge_triples)} 条三元组")
-    
+
+    # 构建检索上下文（自然语言片段列表）
+    contexts = [triple_to_text(t) for t in knowledge_triples]
+
     # Step 5: 推理与综合
     print("\nStep 5: 自底向上推理与综合...")
     verified_answers = {}
     for node in postorder_traverse(mind_map):
         q = node["sub_question"]
         if node["state"] == "Continue" or node.get("children"):
-            continue  # 非叶子节点跳过
+            continue
         print(f"\n  >>> 正在推理子问题：{q}")
         ans1 = first_reasoning(q, knowledge_triples, verified_answers)
         print(f"      第一次推理：{ans1[:80]}..." if len(ans1) > 80 else f"      第一次推理：{ans1}")
         ans2 = second_reasoning(q, knowledge_triples, verified_answers)
         print(f"      第二次推理：{ans2[:80]}..." if len(ans2) > 80 else f"      第二次推理：{ans2}")
-        # 检查答案是否包含“信息不足”
+
         def is_insufficient(ans):
             return "信息不足" in ans or "无法回答" in ans
 
@@ -441,8 +431,7 @@ def process_single_question(question, client):
             print(f"      🔄 重新思考答案：{final_ans[:80]}..." if len(final_ans) > 80 else f"      🔄 重新思考答案：{final_ans}")
 
         verified_answers[q] = final_ans
-        
-    
+
     root_node = mind_map[0]
     root_question = root_node["sub_question"]
     child_answers = {q: ans for q, ans in verified_answers.items() if q != root_question}
@@ -450,24 +439,21 @@ def process_single_question(question, client):
     final_answer = synthesize_final_answer(root_question, child_answers, knowledge_triples)
     verified_answers[root_question] = final_answer
     print(f"\n最终答案：\n{final_answer}")
-    
-    return final_answer, verified_answers, knowledge_triples
 
+    return final_answer, verified_answers, knowledge_triples, contexts
 
-# 单元格 9：批量处理函数
+# ---------- 批量处理（写入 CSV 时包含检索上下文） ----------
 def process_batch(input_csv_path, output_csv_path, client):
-    # 读取待解决问题
     questions = []
     with open(input_csv_path, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        header = next(reader)  # 跳过表头
+        header = next(reader)
         for row in reader:
             if row and row[1].strip():
                 questions.append((row[0], row[1].strip()))
-    
+
     print(f"共读取 {len(questions)} 个问题。")
-    
-    # 检查已处理的问题，避免重复（可选）
+
     processed_ids = set()
     if Path(output_csv_path).exists():
         with open(output_csv_path, 'r', encoding='utf-8') as f:
@@ -476,31 +462,31 @@ def process_batch(input_csv_path, output_csv_path, client):
             for row in reader:
                 if row:
                     processed_ids.add(row[0])
-    
-    # 逐条处理
+
     for idx, q in questions:
         if idx in processed_ids:
             print(f"问题 {idx} 已处理，跳过。")
             continue
         print(f"\n{'='*50}\n处理序号 {idx}：{q}\n{'='*50}")
         try:
-            final_answer, _, _ = process_single_question(q, client)
+            final_answer, _, _, contexts = process_single_question(q, client)
         except Exception as e:
             print(f"处理失败：{e}")
             final_answer = f"处理出错：{e}"
-        
-        # 追加写入CSV
+            contexts = []
+
+        context_str = json.dumps(contexts, ensure_ascii=False) if contexts else "[]"
+
         file_exists = Path(output_csv_path).exists()
         with open(output_csv_path, 'a', encoding='utf-8', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["序号", "问题", "综合回答"])
-            writer.writerow([idx, q, final_answer])
+                writer.writerow(["序号", "问题", "综合回答", "检索上下文"])
+            writer.writerow([idx, q, final_answer, context_str])
         print(f"结果已写入 {output_csv_path}")
 
-# 单元格 10：主控制 - 选择模式并执行
+# ---------- 主程序 ----------
 if __name__ == "__main__":
-    # 初始化 Neo4j 客户端
     client = Neo4jClient()
     try:
         result = client.query("MATCH (n) RETURN count(n) AS total")
@@ -510,12 +496,12 @@ if __name__ == "__main__":
         print(f"Neo4j 连接失败：{e}")
         client = None
         exit(1)
-    
+
     print("\n请选择运行模式：")
     print("1. 单个问题处理")
     print("2. 批量处理（从 data/待解决问题.csv 读取，写入 data/已解决问题.csv）")
     mode = input("输入 1 或 2：").strip()
-    
+
     if mode == "1":
         question = input("请输入问题：").strip()
         if question:
@@ -531,6 +517,6 @@ if __name__ == "__main__":
             process_batch(input_file, output_file, client)
     else:
         print("无效选择。")
-    
+
     client.close()
     print("处理完成。")
