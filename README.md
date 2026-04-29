@@ -12,7 +12,7 @@ cog_rag_service/
 ├── README.md                     # 说明  
 ├── main_pipeline.py              # 主程序  
 └── data/                         # 数据  
-&emsp;&emsp;├── 样例.txt  
+&emsp;&emsp;├── 结果（用于存放最终结果）
 &emsp;&emsp;├── 待解决问题.csv    
 &emsp;&emsp;└── 已解决问题.csv
 ## 快速开始
